@@ -1,0 +1,9 @@
+Program        → Expression*
+Expression     → Atom | List | Vector | Quoted | Quasiquoted | Unquoted | UnquoteSpliced
+Atom           → Boolean | Number | String | Character | Symbol
+List           → "(" Expression* ")" | "(" Expression+ "." Expression ")"
+Vector         → "[" Expression* "]"
+Quoted         → "'" Expression
+Quasiquoted    → "`" Expression
+Unquoted       → "," Expression
+UnquoteSpliced → ",@" Expression

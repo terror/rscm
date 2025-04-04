@@ -4,8 +4,6 @@ version = "0.0.0"
 description = "A scheme compiler"
 edition = "2024"
 
-[dependencies]
-
 [dev-dependencies]
 indoc = "2.0.6"
 pretty_assertions = "1.4.1"

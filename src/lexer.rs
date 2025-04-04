@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Debug)]
 pub(crate) struct Lexer<'src> {
   chars: Chars<'src>,
   current: Option<char>,
@@ -146,7 +147,7 @@ impl<'src> Lexer<'src> {
             }
           }
 
-          return self.number();
+          self.number()
         }
         _ => self.error("Invalid hash prefix"),
       }
@@ -156,7 +157,7 @@ impl<'src> Lexer<'src> {
   }
 
   fn is_digit(c: char) -> bool {
-    c.is_digit(10)
+    c.is_ascii_digit()
   }
 
   fn is_digit_in_radix(c: char, radix: u32) -> bool {
@@ -165,7 +166,7 @@ impl<'src> Lexer<'src> {
 
   fn is_number_start(&self, c: char) -> bool {
     Self::is_digit(c)
-      || (c == '-' || c == '+') && self.peek().map_or(false, Self::is_digit)
+      || (c == '-' || c == '+') && self.peek().is_some_and(Self::is_digit)
   }
 
   fn is_symbol_char(c: char) -> bool {
