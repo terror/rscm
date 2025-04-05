@@ -10,7 +10,7 @@ pub(crate) struct Parser<'src> {
 #[allow(unused)]
 pub(crate) enum ParseError<'src> {
   UnexpectedToken {
-    expected: &'static str,
+    expected: &'src str,
     found: Token<'src>,
   },
   InvalidNumber(Token<'src>),
@@ -72,6 +72,8 @@ impl Display for ParseError<'_> {
     }
   }
 }
+
+impl std::error::Error for ParseError<'_> {}
 
 impl<'src> Parser<'src> {
   pub fn new(src: &'src str) -> Self {

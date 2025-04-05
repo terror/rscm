@@ -1,16 +1,16 @@
 use {
   ast::{Atom, Expression, Number},
-  clap::Parser,
+  clap::Parser as Clap,
   compiler::Compiler,
   inkwell::context::Context,
   lexer::Lexer,
-  parser::Parser as SchemeParser,
+  parser::Parser,
   position::Position,
   std::{
     fmt::{self, Display, Formatter},
     fs,
-    process::Command,
-    str::Chars,
+    process::{self, Command, Output},
+    str::{self, Chars},
   },
   tempfile::tempdir,
   token::Token,
@@ -25,90 +25,81 @@ mod position;
 mod token;
 mod token_kind;
 
-#[derive(Parser)]
+#[derive(Clap)]
 #[clap(author, version, about)]
-struct Args {
+struct Arguments {
   filename: String,
 }
 
-fn run_command(cmd: &str, args: &[&str]) -> Result<String, String> {
-  let output = Command::new(cmd)
-    .args(args)
-    .output()
-    .map_err(|e| format!("Failed to execute {}: {}", cmd, e))?;
+impl Arguments {
+  fn run(self) -> Result {
+    let tempdir = tempdir()?;
 
-  Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    let input = fs::read_to_string(&self.filename)?;
+
+    let ast = match Parser::new(&input).parse() {
+      Ok(ast) => ast,
+      Err(error) => {
+        eprintln!("error: {error}");
+        process::exit(1);
+      }
+    };
+
+    let context = Context::create();
+
+    let mut compiler = Compiler::new(&context, env!("CARGO_PKG_NAME"));
+    compiler.compile(&ast)?;
+
+    let output_ir = tempdir
+      .path()
+      .join(format!("{}-output.ll", env!("CARGO_PKG_NAME")));
+
+    fs::write(&output_ir, &compiler.get_ir())?;
+
+    let output_s = tempdir
+      .path()
+      .join(format!("{}-output.s", env!("CARGO_PKG_NAME")));
+
+    Self::command(
+      "llc",
+      &[
+        output_ir.to_str().unwrap(),
+        "-o",
+        output_s.to_str().unwrap(),
+      ],
+    )?;
+
+    let binary = tempdir
+      .path()
+      .join(format!("{}.out", env!("CARGO_PKG_NAME")));
+
+    Self::command(
+      "clang",
+      &[
+        output_s.to_str().unwrap(),
+        "-o",
+        binary.to_str().ok_or("Path isn't valid unicode")?,
+      ],
+    )?;
+
+    println!(
+      "{}",
+      str::from_utf8(&Self::command(binary.to_str().unwrap(), &[])?.stdout)?
+    );
+
+    Ok(())
+  }
+
+  fn command(cmd: &str, args: &[&str]) -> Result<Output> {
+    Ok(Command::new(cmd).args(args).output()?)
+  }
 }
 
+type Result<T = (), E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
+
 fn main() {
-  let args = Args::parse();
-
-  let input = fs::read_to_string(&args.filename).unwrap_or_else(|err| {
-    eprintln!("Failed to read file '{}': {}", &args.filename, err);
-    std::process::exit(1);
-  });
-
-  let ast = match SchemeParser::new(&input).parse() {
-    Ok(ast) => ast,
-    Err(err) => {
-      eprintln!("Failed to parse program: {}", err);
-      std::process::exit(1);
-    }
-  };
-
-  let temp_dir = tempdir().expect("Failed to create temporary directory");
-
-  let output_ll = temp_dir.path().join("output.ll");
-  let output_s = temp_dir.path().join("output.s");
-  let output_exe = temp_dir.path().join("output");
-
-  let context = Context::create();
-
-  let mut compiler = Compiler::new(&context, "scheme_module");
-
-  if let Err(error) = compiler.compile(&ast) {
+  if let Err(error) = Arguments::parse().run() {
     eprintln!("error: {error}");
-    std::process::exit(1);
-  }
-
-  let ir = compiler.get_ir();
-
-  if let Err(err) = fs::write(&output_ll, &ir) {
-    eprintln!("Could not write to {}: {}", output_ll.display(), err);
-    std::process::exit(1);
-  }
-
-  if let Err(err) = run_command(
-    "llc",
-    &[
-      output_ll.to_str().unwrap(),
-      "-o",
-      output_s.to_str().unwrap(),
-    ],
-  ) {
-    eprintln!("{}", err);
-    std::process::exit(1);
-  }
-
-  if let Err(err) = run_command(
-    "clang",
-    &[
-      output_s.to_str().unwrap(),
-      "-o",
-      output_exe.to_str().unwrap(),
-    ],
-  ) {
-    eprintln!("{}", err);
-    std::process::exit(1);
-  }
-
-  match run_command(output_exe.to_str().unwrap(), &[]) {
-    Ok(output) => {
-      println!("{output}");
-    }
-    Err(err) => {
-      eprintln!("{}", err);
-      std::process::exit(1);
-    }
+    process::exit(1);
   }
 }
