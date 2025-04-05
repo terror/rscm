@@ -25,8 +25,9 @@ You can compile and run scheme programs by passing in a file:
 rscm examples/factorial.scm
 ```
 
-This command compiles and runs the factorial example under `/examples`, which
-looks like:
+This command compiles and runs the factorial example under the
+[`/examples`](https://github.com/terror/rscm/tree/master/examples) directory,
+which looks like:
 
 ```scheme
 (define (factorial n)
@@ -37,11 +38,14 @@ looks like:
 (display (factorial 5))
 ```
 
-...which results in:
+Which outputs to standard output:
 
 ```bash
 120
 ```
+
+Check out the [integration test suite](https://github.com/terror/rscm/blob/master/tests/integration.rs)
+for more example programs.
 
 ## Prior Art
 
