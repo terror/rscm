@@ -16,6 +16,7 @@ struct Test<'a> {
   tempdir: TempDir,
 }
 
+#[allow(unused)]
 impl<'a> Test<'a> {
   fn new() -> Result<Self> {
     Ok(Self {

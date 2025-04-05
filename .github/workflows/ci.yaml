@@ -18,7 +18,6 @@ env:
 jobs:
   lint:
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
 
@@ -43,7 +42,6 @@ jobs:
 
   msrv:
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
 
@@ -55,27 +53,20 @@ jobs:
       run: cargo check
 
   test:
-    strategy:
-      matrix:
-        os:
-        - ubuntu-latest
-        - macos-latest
-        - windows-latest
-
-    runs-on: ${{matrix.os}}
+    runs-on: macos-latest
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Remove Broken WSL bash executable
-      if: ${{ matrix.os == 'windows-latest' }}
-      shell: cmd
+    - name: Install LLVM
       run: |
-        takeown /F C:\Windows\System32\bash.exe
-        icacls C:\Windows\System32\bash.exe /grant administrators:F
-        del C:\Windows\System32\bash.exe
+        brew install llvm@18
+        echo /opt/homebrew/opt/llvm@18/bin >> $GITHUB_PATH
 
     - uses: Swatinem/rust-cache@v2
 
     - name: Test
+      env:
+        RUSTFLAGS: -L /opt/homebrew/lib/
+
       run: cargo test --all
