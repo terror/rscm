@@ -54,7 +54,7 @@ impl Arguments {
       .path()
       .join(format!("{}-output.ll", env!("CARGO_PKG_NAME")));
 
-    fs::write(&output_ir, &compiler.get_ir())?;
+    fs::write(&output_ir, compiler.get_ir())?;
 
     let output_s = tempdir
       .path()

@@ -35,7 +35,7 @@ which looks like:
 (display (factorial 5))
 ```
 
-Which outputs to standard output:
+Which writes to standard output:
 
 ```bash
 120

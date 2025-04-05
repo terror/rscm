@@ -581,7 +581,7 @@ impl<'ctx> Compiler<'ctx> {
             .build_load(*pointee_type, ptr, "typed_load")
             .map_err(|e| e.to_string())
         } else {
-          return Err("Failed to find type for pointer".into());
+          Err("Failed to find type for pointer".into())
         }
       }
       _ => Ok(value),
@@ -792,9 +792,7 @@ impl<'ctx> Compiler<'ctx> {
 
             self.symbols.insert((*name).to_string(), alloca);
 
-            self
-              .pointer_type_map
-              .insert(alloca, parameter.get_type().into());
+            self.pointer_type_map.insert(alloca, parameter.get_type());
           }
 
           let body_result = self.compile_expression(&args[1])?;
