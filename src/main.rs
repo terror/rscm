@@ -66,8 +66,8 @@ fn main() {
 
   let mut compiler = Compiler::new(&context, "scheme_module");
 
-  if let Err(err) = compiler.compile(&ast) {
-    eprintln!("Failed to compile program: {}", err);
+  if let Err(error) = compiler.compile(&ast) {
+    eprintln!("error: {error}");
     std::process::exit(1);
   }
 

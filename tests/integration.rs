@@ -1,6 +1,7 @@
 use {
   executable_path::executable_path,
   indoc::indoc,
+  pretty_assertions::assert_eq,
   std::{fs::File, io::Write, process::Command, str},
   tempfile::TempDir,
   unindent::Unindent,
@@ -16,7 +17,6 @@ struct Test<'a> {
   tempdir: TempDir,
 }
 
-#[allow(unused)]
 impl<'a> Test<'a> {
   fn new() -> Result<Self> {
     Ok(Self {
@@ -75,8 +75,6 @@ impl<'a> Test<'a> {
       )
     })?;
 
-    assert_eq!(output.status.code(), Some(self.expected_status));
-
     let stderr = str::from_utf8(&output.stderr)?;
 
     assert_eq!(stderr, self.expected_stderr, "Stderr mismatch.");
@@ -89,8 +87,81 @@ impl<'a> Test<'a> {
 
     assert_eq!(str::from_utf8(&output.stdout)?, self.expected_stdout);
 
+    assert_eq!(output.status.code(), Some(self.expected_status));
+
     Ok(self.tempdir)
   }
+}
+
+#[test]
+fn hello_world() -> Result {
+  Test::new()?
+    .program(indoc! {
+      "
+      (display \"Hello, world!\")
+      "
+    })
+    .expected_status(0)
+    .expected_stdout("Hello, world!\n")
+    .run()
+}
+
+#[test]
+fn display_requires_single_argument() -> Result {
+  Test::new()?
+    .program(indoc! {
+      "
+      (display \"foo\" \"bar\")
+      "
+    })
+    .expected_status(1)
+    .expected_stderr("error: Function `display` requires exactly 1 argument\n")
+    .run()
+}
+
+#[test]
+fn unknown_symbol() -> Result {
+  Test::new()?
+    .program(indoc! {
+      "
+      (display foo)
+      "
+    })
+    .expected_status(1)
+    .expected_stderr("error: Undefined symbol `foo`\n")
+    .run()
+}
+
+#[test]
+fn add_two_int_literals() -> Result {
+  Test::new()?
+    .program(indoc! {
+      "
+      (define (add a b)
+        (+ a b))
+
+      (display (add 1 2))
+      "
+    })
+    .expected_status(0)
+    .expected_stdout("3\n")
+    .run()
+}
+
+#[test]
+fn function_name_must_be_symbol() -> Result {
+  Test::new()?
+    .program(indoc! {
+      "
+      (define (10 a b)
+        (+ a b))
+
+      (display (add 1.5 2.5))
+      "
+    })
+    .expected_status(1)
+    .expected_stderr("error: Function name must be a symbol\n")
+    .run()
 }
 
 #[test]
@@ -108,5 +179,25 @@ fn factorial() -> Result {
     })
     .expected_status(0)
     .expected_stdout("120\n")
+    .run()
+}
+
+#[test]
+fn invalid_number_of_function_arguments() -> Result {
+  Test::new()?
+    .program(indoc! {
+      "
+      (define (factorial n)
+        (if (= n 0)
+          1
+          (* n (factorial (- n 1)))))
+
+      (display (factorial 5 5))
+      "
+    })
+    .expected_status(1)
+    .expected_stderr(
+      "error: Function factorial expects 1 argument(s), but got 2\n",
+    )
     .run()
 }

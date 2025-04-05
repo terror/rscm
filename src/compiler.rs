@@ -5,9 +5,9 @@ use {
     builder::Builder,
     context::Context,
     module::Module,
+    types::BasicTypeEnum,
     values::{
-      BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue,
-      PointerValue,
+      BasicMetadataValueEnum, BasicValueEnum, FunctionValue, PointerValue,
     },
   },
   std::collections::HashMap,
@@ -19,6 +19,7 @@ pub struct Compiler<'ctx> {
   module: Module<'ctx>,
   builder: Builder<'ctx>,
   symbols: HashMap<String, PointerValue<'ctx>>,
+  pointer_type_map: HashMap<PointerValue<'ctx>, BasicTypeEnum<'ctx>>,
   current_function: Option<FunctionValue<'ctx>>,
 }
 
@@ -29,18 +30,31 @@ impl<'ctx> Compiler<'ctx> {
     let builder = context.create_builder();
 
     Self {
-      context,
-      module,
       builder,
-      symbols: HashMap::new(),
+      context,
       current_function: None,
+      module,
+      pointer_type_map: HashMap::new(),
+      symbols: HashMap::new(),
     }
   }
 
   pub fn compile(&mut self, expressions: &[Expression]) -> Result<(), String> {
-    self.declare_stdlib_functions();
+    let i8_ptr_type = self.context.ptr_type(AddressSpace::default());
 
-    self.initialize_global_env();
+    let printf_type =
+      self.context.i32_type().fn_type(&[i8_ptr_type.into()], true);
+
+    self.module.add_function("printf", printf_type, None);
+
+    self.define_primitive("*", 2);
+    self.define_primitive("+", 2);
+    self.define_primitive("-", 2);
+    self.define_primitive("/", 2);
+    self.define_primitive("<", 2);
+    self.define_primitive("=", 2);
+    self.define_primitive(">", 2);
+    self.define_primitive("display", 1);
 
     for expr in expressions {
       if let Expression::List(elements) = expr {
@@ -105,36 +119,15 @@ impl<'ctx> Compiler<'ctx> {
     self.module.print_to_string().to_string()
   }
 
-  fn declare_stdlib_functions(&self) {
-    let i8_ptr_type = self.context.ptr_type(AddressSpace::default());
-
-    let printf_type =
-      self.context.i32_type().fn_type(&[i8_ptr_type.into()], true);
-
-    self.module.add_function("printf", printf_type, None);
-  }
-
-  fn initialize_global_env(&mut self) {
-    self.define_primitive("*", 2);
-    self.define_primitive("+", 2);
-    self.define_primitive("-", 2);
-    self.define_primitive("/", 2);
-    self.define_primitive("<", 2);
-    self.define_primitive("=", 2);
-    self.define_primitive(">", 2);
-    self.define_primitive("display", 1);
-  }
-
   fn define_primitive(&mut self, name: &str, arity: u32) {
     let i64_type = self.context.i64_type();
 
     let global = self.module.add_global(i64_type, None, name);
-
     global.set_initializer(&i64_type.const_int(arity as u64, false));
 
-    self
-      .symbols
-      .insert(name.to_string(), global.as_pointer_value());
+    let ptr = global.as_pointer_value();
+    self.symbols.insert(name.to_string(), ptr);
+    self.pointer_type_map.insert(ptr, i64_type.into());
   }
 
   fn compile_expression(
@@ -169,7 +162,7 @@ impl<'ctx> Compiler<'ctx> {
         if let Some(val) = self.symbols.get(*s) {
           Ok((*val).into())
         } else {
-          Err(format!("Undefined symbol: {}", s))
+          Err(format!("Undefined symbol `{}`", s))
         }
       }
     }
@@ -239,18 +232,18 @@ impl<'ctx> Compiler<'ctx> {
 
     match operation {
       "+" => {
-        let result = compiled_arguments[0];
+        let argument = self.dereference(compiled_arguments[0])?;
 
-        match result {
+        match argument {
           BasicValueEnum::IntValue(i) => {
             let mut int_result = i;
 
             for argument in &compiled_arguments[1..] {
-              match argument {
+              match self.dereference(*argument)? {
                 BasicValueEnum::IntValue(i) => {
                   int_result = self
                     .builder
-                    .build_int_add(int_result, *i, "add")
+                    .build_int_add(int_result, i, "add")
                     .map_err(|e| e.to_string())?;
                 }
                 _ => return Err("Type mismatch in addition".to_string()),
@@ -281,7 +274,7 @@ impl<'ctx> Compiler<'ctx> {
       }
       "-" => {
         if compiled_arguments.len() == 1 {
-          let argument = self.dereference_value(compiled_arguments[0])?;
+          let argument = self.dereference(compiled_arguments[0])?;
 
           match argument {
             BasicValueEnum::IntValue(i) => {
@@ -307,14 +300,14 @@ impl<'ctx> Compiler<'ctx> {
             _ => Err(format!("Unsupported type for negation: {:?}", argument)),
           }
         } else {
-          let argument = self.dereference_value(compiled_arguments[0])?;
+          let argument = self.dereference(compiled_arguments[0])?;
 
           match argument {
             BasicValueEnum::IntValue(i) => {
               let mut int_result = i;
 
               for argument in &compiled_arguments[1..] {
-                let argument_value = self.dereference_value(*argument)?;
+                let argument_value = self.dereference(*argument)?;
 
                 match argument_value {
                   BasicValueEnum::IntValue(i) => {
@@ -338,7 +331,7 @@ impl<'ctx> Compiler<'ctx> {
               let mut float_result = f;
 
               for argument in &compiled_arguments[1..] {
-                let argument_value = self.dereference_value(*argument)?;
+                let argument_value = self.dereference(*argument)?;
 
                 match argument_value {
                   BasicValueEnum::FloatValue(f) => {
@@ -371,14 +364,14 @@ impl<'ctx> Compiler<'ctx> {
           );
         }
 
-        let first = self.dereference_value(compiled_arguments[0])?;
+        let first = self.dereference(compiled_arguments[0])?;
 
         match first {
           BasicValueEnum::IntValue(i) => {
             let mut int_result = i;
 
             for argument in &compiled_arguments[1..] {
-              let argument_value = self.dereference_value(*argument)?;
+              let argument_value = self.dereference(*argument)?;
 
               match argument_value {
                 BasicValueEnum::IntValue(i) => {
@@ -402,7 +395,7 @@ impl<'ctx> Compiler<'ctx> {
             let mut float_result = f;
 
             for argument in &compiled_arguments[1..] {
-              let argument_value = self.dereference_value(*argument)?;
+              let argument_value = self.dereference(*argument)?;
 
               match argument_value {
                 BasicValueEnum::FloatValue(f) => {
@@ -474,8 +467,8 @@ impl<'ctx> Compiler<'ctx> {
         }
 
         let (lhs, rhs) = (
-          self.dereference_value(compiled_arguments[0])?,
-          self.dereference_value(compiled_arguments[1])?,
+          self.dereference(compiled_arguments[0])?,
+          self.dereference(compiled_arguments[1])?,
         );
 
         match (lhs, rhs) {
@@ -509,8 +502,8 @@ impl<'ctx> Compiler<'ctx> {
         }
 
         let (lhs, rhs) = (
-          self.dereference_value(compiled_arguments[0])?,
-          self.dereference_value(compiled_arguments[1])?,
+          self.dereference(compiled_arguments[0])?,
+          self.dereference(compiled_arguments[1])?,
         );
 
         match (lhs, rhs) {
@@ -544,8 +537,8 @@ impl<'ctx> Compiler<'ctx> {
         }
 
         let (lhs, rhs) = (
-          self.dereference_value(compiled_arguments[0])?,
-          self.dereference_value(compiled_arguments[1])?,
+          self.dereference(compiled_arguments[0])?,
+          self.dereference(compiled_arguments[1])?,
         );
 
         match (lhs, rhs) {
@@ -576,18 +569,20 @@ impl<'ctx> Compiler<'ctx> {
     }
   }
 
-  fn dereference_value(
+  fn dereference(
     &self,
     value: BasicValueEnum<'ctx>,
   ) -> Result<BasicValueEnum<'ctx>, String> {
     match value {
       BasicValueEnum::PointerValue(ptr) => {
-        let i64_type = self.context.i64_type();
-
-        self
-          .builder
-          .build_load(i64_type, ptr, "dereferenced")
-          .map_err(|e| e.to_string())
+        if let Some(pointee_type) = self.pointer_type_map.get(&ptr) {
+          self
+            .builder
+            .build_load(*pointee_type, ptr, "typed_load")
+            .map_err(|e| e.to_string())
+        } else {
+          return Err("Failed to find type for pointer".into());
+        }
       }
       _ => Ok(value),
     }
@@ -699,33 +694,47 @@ impl<'ctx> Compiler<'ctx> {
       Expression::Atom(Atom::Symbol(name)) => {
         let value = self.compile_expression(&args[1])?;
 
-        let i64_type = self.context.i64_type();
+        let global_type = match value {
+          BasicValueEnum::IntValue(_) => self.context.i64_type().into(),
+          BasicValueEnum::FloatValue(_) => self.context.f64_type().into(),
+          _ => self.context.i64_type().into(),
+        };
 
-        let global = self.module.add_global(i64_type, None, name);
+        let global = self.module.add_global(global_type, None, name);
 
-        let value_i64 = match value {
+        match value {
           BasicValueEnum::IntValue(i) => {
-            if i.get_type() == i64_type {
-              i
+            if global_type == self.context.i64_type().into() {
+              global.set_initializer(&i);
             } else {
-              self
+              let casted = self
                 .builder
-                .build_int_cast(i, i64_type, "cast_to_i64")
-                .map_err(|e| e.to_string())?
+                .build_int_cast(i, self.context.i64_type(), "cast_to_i64")
+                .map_err(|e| e.to_string())?;
+              global.set_initializer(&casted);
             }
           }
-          BasicValueEnum::FloatValue(f) => self
-            .builder
-            .build_float_to_signed_int(f, i64_type, "float_to_i64")
-            .map_err(|e| e.to_string())?,
+          BasicValueEnum::FloatValue(f) => {
+            if global_type == self.context.f64_type().into() {
+              global.set_initializer(&f);
+            } else {
+              let converted = self
+                .builder
+                .build_float_to_signed_int(
+                  f,
+                  self.context.i64_type(),
+                  "float_to_i64",
+                )
+                .map_err(|e| e.to_string())?;
+              global.set_initializer(&converted);
+            }
+          }
           _ => return Err("Unsupported type for global variable".to_string()),
         };
 
-        global.set_initializer(&value_i64);
-
-        self
-          .symbols
-          .insert((*name).to_string(), global.as_pointer_value());
+        let ptr = global.as_pointer_value();
+        self.symbols.insert((*name).to_string(), ptr);
+        self.pointer_type_map.insert(ptr, global_type);
 
         Ok(self.context.i32_type().const_int(0, false).into())
       }
@@ -754,20 +763,17 @@ impl<'ctx> Compiler<'ctx> {
             None,
           );
 
-          self.symbols.insert(
-            (*name).to_string(),
-            function.as_global_value().as_pointer_value(),
-          );
+          let ptr = function.as_global_value().as_pointer_value();
+          self.symbols.insert((*name).to_string(), ptr);
 
           let old_function = self.current_function;
-
           self.current_function = Some(function);
 
           let entry_block = self.context.append_basic_block(function, "entry");
-
           self.builder.position_at_end(entry_block);
 
           let old_symbols = self.symbols.clone();
+          let old_type_map = self.pointer_type_map.clone();
 
           for (i, name) in params.iter().enumerate() {
             let parameter = function
@@ -785,16 +791,30 @@ impl<'ctx> Compiler<'ctx> {
               .map_err(|e| e.to_string())?;
 
             self.symbols.insert((*name).to_string(), alloca);
+
+            self
+              .pointer_type_map
+              .insert(alloca, parameter.get_type().into());
           }
 
           let body_result = self.compile_expression(&args[1])?;
 
+          let return_value = match body_result {
+            BasicValueEnum::FloatValue(f) => self
+              .builder
+              .build_float_to_signed_int(f, i64_type, "float_to_i64_return")
+              .map_err(|e| e.to_string())?
+              .into(),
+            _ => body_result,
+          };
+
           self
             .builder
-            .build_return(Some(&body_result))
+            .build_return(Some(&return_value))
             .map_err(|e| e.to_string())?;
 
           self.symbols = old_symbols;
+          self.pointer_type_map = old_type_map;
 
           self.current_function = old_function;
 
@@ -826,7 +846,7 @@ impl<'ctx> Compiler<'ctx> {
 
     if function.count_params() != arguments.len() as u32 {
       return Err(format!(
-        "Function {} expects {} arguments, but got {}",
+        "Function {} expects {} argument(s), but got {}",
         name,
         function.count_params(),
         arguments.len()
@@ -841,24 +861,42 @@ impl<'ctx> Compiler<'ctx> {
         i, name
       ))?;
 
-      let mut processed_argument = self.dereference_value(*argument)?;
+      let param_type = parameter.get_type();
+      let mut processed_argument = self.dereference(*argument)?;
 
-      if let (
-        BasicValueEnum::IntValue(i),
-        BasicValueEnum::IntValue(expected_i),
-      ) = (processed_argument, parameter.as_basic_value_enum())
-      {
-        if i.get_type() != expected_i.get_type() {
+      match (processed_argument, param_type) {
+        (BasicValueEnum::FloatValue(f), BasicTypeEnum::IntType(int_ty)) => {
           processed_argument = self
             .builder
-            .build_int_cast(
-              i,
-              expected_i.get_type(),
-              &format!("cast_arg_{}", i),
+            .build_float_to_signed_int(
+              f,
+              int_ty,
+              &format!("float_to_int_{}", i),
             )
             .map_err(|e| e.to_string())?
             .into();
         }
+        (BasicValueEnum::IntValue(i), BasicTypeEnum::FloatType(float_ty)) => {
+          processed_argument = self
+            .builder
+            .build_signed_int_to_float(
+              i,
+              float_ty,
+              &format!("int_to_float_{}", i),
+            )
+            .map_err(|e| e.to_string())?
+            .into();
+        }
+        (BasicValueEnum::IntValue(i), BasicTypeEnum::IntType(int_ty)) => {
+          if i.get_type() != int_ty {
+            processed_argument = self
+              .builder
+              .build_int_cast(i, int_ty, &format!("int_cast_{}", i))
+              .map_err(|e| e.to_string())?
+              .into();
+          }
+        }
+        _ => {}
       }
 
       processed_arguments.push(processed_argument);
@@ -885,7 +923,7 @@ impl<'ctx> Compiler<'ctx> {
     arguments: &[Expression],
   ) -> Result<BasicValueEnum<'ctx>, String> {
     if arguments.len() != 1 {
-      return Err("Display requires exactly 1 argument".to_string());
+      return Err("Function `display` requires exactly 1 argument".to_string());
     }
 
     let value = self.compile_expression(&arguments[0])?;
@@ -918,10 +956,7 @@ impl<'ctx> Compiler<'ctx> {
         &[format_string.as_pointer_value().into(), value.into()],
         "printf_call",
       )
-      .map_err(|e| e.to_string())?
-      .try_as_basic_value()
-      .left()
-      .ok_or("printf should return a value".to_string())?;
+      .map_err(|e| e.to_string())?;
 
     Ok(value)
   }
