@@ -218,3 +218,19 @@ fn invalid_number_of_function_arguments() -> Result {
     )
     .run()
 }
+
+#[test]
+fn functions_are_forwardly_defined() -> Result {
+  Test::new()?
+    .program(indoc! {
+      "
+      (display (sub 5 2))
+
+      (define (sub a b)
+        (- a b))
+      "
+    })
+    .expected_status(0)
+    .expected_stdout("3")
+    .run()
+}

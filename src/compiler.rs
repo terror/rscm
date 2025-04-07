@@ -42,33 +42,16 @@ impl<'ctx> Compiler<'ctx> {
   pub fn compile(
     &mut self,
     expressions: &[Expression],
-  ) -> Result<Module<'ctx>, String> {
-    let i8_ptr_type = self.context.ptr_type(AddressSpace::default());
+  ) -> Result<Module<'ctx>> {
+    self.register_builtins()?;
 
-    let printf_type =
-      self.context.i32_type().fn_type(&[i8_ptr_type.into()], true);
+    let functions = expressions
+      .iter()
+      .filter(|expr| expr.is_function())
+      .collect::<Vec<&Expression>>();
 
-    self.module.add_function("printf", printf_type, None);
-
-    self.define_primitive("*", 2);
-    self.define_primitive("+", 2);
-    self.define_primitive("-", 2);
-    self.define_primitive("/", 2);
-    self.define_primitive("<", 2);
-    self.define_primitive("=", 2);
-    self.define_primitive(">", 2);
-    self.define_primitive("display", 1);
-
-    for expr in expressions {
-      if let Expression::List(elements) = expr {
-        if !elements.is_empty() {
-          if let Expression::Atom(Atom::Symbol(name)) = &elements[0] {
-            if *name == "define" {
-              self.compile_expression(expr)?;
-            }
-          }
-        }
-      }
+    for function in &functions {
+      self.compile_expression(function)?;
     }
 
     let i32_type = self.context.i32_type();
@@ -86,18 +69,13 @@ impl<'ctx> Compiler<'ctx> {
 
     let mut result = None;
 
-    for expr in expressions {
-      if let Expression::List(elements) = expr {
-        if !elements.is_empty() {
-          if let Expression::Atom(Atom::Symbol(name)) = &elements[0] {
-            if *name != "define" {
-              result = Some(self.compile_expression(expr)?);
-            }
-          }
-        }
-      } else {
-        result = Some(self.compile_expression(expr)?);
-      }
+    let expressions = expressions
+      .iter()
+      .filter(|expression| !functions.contains(expression))
+      .collect::<Vec<&Expression>>();
+
+    for expression in &expressions {
+      result = Some(self.compile_expression(expression)?);
     }
 
     let return_value = match result {
@@ -111,28 +89,51 @@ impl<'ctx> Compiler<'ctx> {
       .map_err(|e| e.to_string())?;
 
     if self.module.verify().is_err() {
-      self.module.print_to_stderr();
-      return Err("Failed to verify module".to_string());
+      return Err("Failed to verify module".into());
     }
 
     Ok(self.module.clone())
   }
 
-  fn define_primitive(&mut self, name: &str, arity: u32) {
-    let i64_type = self.context.i64_type();
+  fn register_builtins(&mut self) -> Result<(), String> {
+    let primitives = [
+      ("*", 2),
+      ("+", 2),
+      ("-", 2),
+      ("/", 2),
+      ("<", 2),
+      ("=", 2),
+      (">", 2),
+      ("display", 2),
+    ];
 
-    let global = self.module.add_global(i64_type, None, name);
-    global.set_initializer(&i64_type.const_int(arity as u64, false));
+    for (primitive, arity) in primitives {
+      let i64_type = self.context.i64_type();
 
-    let ptr = global.as_pointer_value();
-    self.symbols.insert(name.to_string(), ptr);
-    self.pointer_type_map.insert(ptr, i64_type.into());
+      let global = self.module.add_global(i64_type, None, primitive);
+      global.set_initializer(&i64_type.const_int(arity as u64, false));
+
+      let ptr = global.as_pointer_value();
+      self.symbols.insert(primitive.to_string(), ptr);
+      self.pointer_type_map.insert(ptr, i64_type.into());
+    }
+
+    self.module.add_function(
+      "printf",
+      self.context.i32_type().fn_type(
+        &[self.context.ptr_type(AddressSpace::default()).into()],
+        true,
+      ),
+      None,
+    );
+
+    Ok(())
   }
 
   fn compile_expression(
     &mut self,
     expr: &Expression,
-  ) -> Result<BasicValueEnum<'ctx>, String> {
+  ) -> Result<BasicValueEnum<'ctx>> {
     match expr {
       Expression::Atom(atom) => self.compile_atom(atom),
       Expression::List(elements) => self.compile_list(elements),
@@ -140,7 +141,7 @@ impl<'ctx> Compiler<'ctx> {
     }
   }
 
-  fn compile_atom(&self, atom: &Atom) -> Result<BasicValueEnum<'ctx>, String> {
+  fn compile_atom(&self, atom: &Atom) -> Result<BasicValueEnum<'ctx>> {
     match atom {
       Atom::Boolean(b) => {
         Ok(self.context.bool_type().const_int(*b as u64, false).into())
@@ -161,33 +162,30 @@ impl<'ctx> Compiler<'ctx> {
         if let Some(val) = self.symbols.get(*s) {
           Ok((*val).into())
         } else {
-          Err(format!("Undefined symbol `{}`", s))
+          Err(format!("Undefined symbol `{}`", s).into())
         }
       }
     }
   }
 
-  fn compile_number(
-    &self,
-    num: &Number,
-  ) -> Result<BasicValueEnum<'ctx>, String> {
+  fn compile_number(&self, num: &Number) -> Result<BasicValueEnum<'ctx>> {
     match num {
       Number::Integer(i) => {
         Ok(self.context.i64_type().const_int(*i as u64, *i < 0).into())
       }
       Number::Float(f) => Ok(self.context.f64_type().const_float(*f).into()),
       Number::Rational(_, _) => todo!(),
-      Number::Complex(_, _) => {
-        Err("Complex numbers not yet supported".to_string())
+      Number::Complex(_, _) => Err("Complex numbers not yet supported".into()),
+      Number::Unparsed(s) => {
+        Err(format!("Could not parse number: {}", s).into())
       }
-      Number::Unparsed(s) => Err(format!("Could not parse number: {}", s)),
     }
   }
 
   fn compile_list(
     &mut self,
     elements: &[Expression],
-  ) -> Result<BasicValueEnum<'ctx>, String> {
+  ) -> Result<BasicValueEnum<'ctx>> {
     if elements.is_empty() {
       return Ok(self.context.i32_type().const_int(0, false).into());
     }
@@ -217,11 +215,9 @@ impl<'ctx> Compiler<'ctx> {
   fn compile_newline(
     &mut self,
     arguments: &[Expression],
-  ) -> Result<BasicValueEnum<'ctx>, String> {
+  ) -> Result<BasicValueEnum<'ctx>> {
     if !arguments.is_empty() {
-      return Err(
-        "Function `newline` does not accept any arguments".to_string(),
-      );
+      return Err("Function `newline` does not accept any arguments".into());
     }
 
     let printf = self
@@ -250,16 +246,16 @@ impl<'ctx> Compiler<'ctx> {
     &mut self,
     operation: &str,
     arguments: &[Expression],
-  ) -> Result<BasicValueEnum<'ctx>, String> {
+  ) -> Result<BasicValueEnum<'ctx>> {
     let compiled_arguments = arguments
       .iter()
       .map(|argument| self.compile_expression(argument))
       .collect::<Result<Vec<_>, _>>()?;
 
     if compiled_arguments.is_empty() {
-      return Err(format!(
-        "Primitive operation {operation} requires arguments"
-      ));
+      return Err(
+        format!("Primitive operation {operation} requires arguments").into(),
+      );
     }
 
     match operation {
@@ -278,7 +274,7 @@ impl<'ctx> Compiler<'ctx> {
                     .build_int_add(int_result, i, "add")
                     .map_err(|e| e.to_string())?;
                 }
-                _ => return Err("Type mismatch in addition".to_string()),
+                _ => return Err("Type mismatch in addition".into()),
               }
             }
 
@@ -295,13 +291,13 @@ impl<'ctx> Compiler<'ctx> {
                     .build_float_add(float_result, *f, "add")
                     .map_err(|e| e.to_string())?;
                 }
-                _ => return Err("Type mismatch in addition".to_string()),
+                _ => return Err("Type mismatch in addition".into()),
               }
             }
 
             Ok(float_result.into())
           }
-          _ => Err("Unsupported type for addition".to_string()),
+          _ => Err("Unsupported type for addition".into()),
         }
       }
       "-" => {
@@ -329,7 +325,9 @@ impl<'ctx> Compiler<'ctx> {
 
               Ok(result.into())
             }
-            _ => Err(format!("Unsupported type for negation: {:?}", argument)),
+            _ => Err(
+              format!("Unsupported type for negation: {:?}", argument).into(),
+            ),
           }
         } else {
           let argument = self.dereference(compiled_arguments[0])?;
@@ -352,7 +350,7 @@ impl<'ctx> Compiler<'ctx> {
                     return Err(format!(
                       "Type mismatch in subtraction, expected integer, got: {:?}",
                       argument_value
-                    ));
+                    ).into());
                   }
                 }
               }
@@ -376,24 +374,23 @@ impl<'ctx> Compiler<'ctx> {
                     return Err(format!(
                       "Type mismatch in subtraction, expected float, got: {:?}",
                       argument_value
-                    ));
+                    ).into());
                   }
                 }
               }
 
               Ok(float_result.into())
             }
-            _ => {
-              Err(format!("Unsupported type for subtraction: {:?}", argument))
-            }
+            _ => Err(
+              format!("Unsupported type for subtraction: {:?}", argument)
+                .into(),
+            ),
           }
         }
       }
       "*" => {
         if compiled_arguments.is_empty() {
-          return Err(
-            "Multiplication requires at least one argument".to_string(),
-          );
+          return Err("Multiplication requires at least one argument".into());
         }
 
         let first = self.dereference(compiled_arguments[0])?;
@@ -416,7 +413,7 @@ impl<'ctx> Compiler<'ctx> {
                   return Err(format!(
                     "Type mismatch in multiplication, expected integer, got: {:?}",
                     argument_value
-                  ));
+                  ).into());
                 }
               }
             }
@@ -440,14 +437,16 @@ impl<'ctx> Compiler<'ctx> {
                   return Err(format!(
                     "Type mismatch in multiplication, expected float, got: {:?}",
                     argument_value
-                  ));
+                  ).into());
                 }
               }
             }
 
             Ok(float_result.into())
           }
-          _ => Err(format!("Unsupported type for multiplication: {:?}", first)),
+          _ => Err(
+            format!("Unsupported type for multiplication: {:?}", first).into(),
+          ),
         }
       }
       "/" => {
@@ -465,7 +464,7 @@ impl<'ctx> Compiler<'ctx> {
                     .build_int_signed_div(int_result, *i, "div")
                     .map_err(|e| e.to_string())?;
                 }
-                _ => return Err("Type mismatch in division".to_string()),
+                _ => return Err("Type mismatch in division".into()),
               }
             }
 
@@ -482,19 +481,19 @@ impl<'ctx> Compiler<'ctx> {
                     .build_float_div(float_result, *f, "div")
                     .map_err(|e| e.to_string())?;
                 }
-                _ => return Err("Type mismatch in division".to_string()),
+                _ => return Err("Type mismatch in division".into()),
               }
             }
 
             Ok(float_result.into())
           }
-          _ => Err("Unsupported type for division".to_string()),
+          _ => Err("Unsupported type for division".into()),
         }
       }
       "=" => {
         if compiled_arguments.len() != 2 {
           return Err(
-            "Equality comparison requires exactly 2 arguments".to_string(),
+            "Equality comparison requires exactly 2 arguments".into(),
           );
         }
 
@@ -523,13 +522,13 @@ impl<'ctx> Compiler<'ctx> {
           _ => Err(format!(
             "Type mismatch in equality comparison after loading: lhs={:?}, rhs={:?}",
             lhs, rhs
-          )),
+          ).into()),
         }
       }
       "<" => {
         if compiled_arguments.len() != 2 {
           return Err(
-            "Less than comparison requires exactly 2 arguments".to_string(),
+            "Less than comparison requires exactly 2 arguments".into(),
           );
         }
 
@@ -555,16 +554,19 @@ impl<'ctx> Compiler<'ctx> {
                 .into(),
             )
           }
-          _ => Err(format!(
-            "Type mismatch in less than comparison: lhs={:?}, rhs={:?}",
-            lhs, rhs
-          )),
+          _ => Err(
+            format!(
+              "Type mismatch in less than comparison: lhs={:?}, rhs={:?}",
+              lhs, rhs
+            )
+            .into(),
+          ),
         }
       }
       ">" => {
         if compiled_arguments.len() != 2 {
           return Err(
-            "Greater than comparison requires exactly 2 arguments".to_string(),
+            "Greater than comparison requires exactly 2 arguments".into(),
           );
         }
 
@@ -593,11 +595,11 @@ impl<'ctx> Compiler<'ctx> {
           _ => Err(format!(
             "Type mismatch in greater than comparison after loading: lhs={:?}, rhs={:?}",
             lhs, rhs
-          )),
+          ).into()),
         }
       }
       "display" => self.compile_display(arguments),
-      _ => Err(format!("Unknown primitive operation: {}", operation)),
+      _ => Err(format!("Unknown primitive operation: {}", operation).into()),
     }
   }
 
@@ -623,9 +625,9 @@ impl<'ctx> Compiler<'ctx> {
   fn compile_if(
     &mut self,
     args: &[Expression],
-  ) -> Result<BasicValueEnum<'ctx>, String> {
+  ) -> Result<BasicValueEnum<'ctx>> {
     if args.len() < 2 || args.len() > 3 {
-      return Err("If expression requires 2 or 3 arguments".to_string());
+      return Err("If expression requires 2 or 3 arguments".into());
     }
 
     let condition = self.compile_expression(&args[0])?;
@@ -641,10 +643,10 @@ impl<'ctx> Compiler<'ctx> {
           .map_err(|e| e.to_string())?
         {
           BasicValueEnum::IntValue(val) => val,
-          _ => return Err("Condition must be a boolean value".to_string()),
+          _ => return Err("Condition must be a boolean value".into()),
         }
       }
-      _ => return Err("Condition must be a boolean value".to_string()),
+      _ => return Err("Condition must be a boolean value".into()),
     };
 
     let condition_bool = self
@@ -717,9 +719,9 @@ impl<'ctx> Compiler<'ctx> {
   fn compile_define(
     &mut self,
     args: &[Expression],
-  ) -> Result<BasicValueEnum<'ctx>, String> {
+  ) -> Result<BasicValueEnum<'ctx>> {
     if args.len() != 2 {
-      return Err("Define requires exactly 2 arguments".to_string());
+      return Err("Define requires exactly 2 arguments".into());
     }
 
     match &args[0] {
@@ -761,7 +763,7 @@ impl<'ctx> Compiler<'ctx> {
               global.set_initializer(&converted);
             }
           }
-          _ => return Err("Unsupported type for global variable".to_string()),
+          _ => return Err("Unsupported type for global variable".into()),
         };
 
         let ptr = global.as_pointer_value();
@@ -772,7 +774,7 @@ impl<'ctx> Compiler<'ctx> {
       }
       Expression::List(func_def) => {
         if func_def.is_empty() {
-          return Err("Function definition requires a name".to_string());
+          return Err("Function definition requires a name".into());
         }
 
         if let Expression::Atom(Atom::Symbol(name)) = &func_def[0] {
@@ -850,12 +852,10 @@ impl<'ctx> Compiler<'ctx> {
 
           Ok(self.context.i32_type().const_int(0, false).into())
         } else {
-          Err("Function name must be a symbol".to_string())
+          Err("Function name must be a symbol".into())
         }
       }
-      _ => {
-        Err("First argument to define must be a symbol or a list".to_string())
-      }
+      _ => Err("First argument to define must be a symbol or a list".into()),
     }
   }
 
@@ -863,7 +863,7 @@ impl<'ctx> Compiler<'ctx> {
     &mut self,
     name: &str,
     arguments: &[Expression],
-  ) -> Result<BasicValueEnum<'ctx>, String> {
+  ) -> Result<BasicValueEnum<'ctx>> {
     let arguments = arguments
       .iter()
       .map(|arg| self.compile_expression(arg))
@@ -875,12 +875,15 @@ impl<'ctx> Compiler<'ctx> {
       .ok_or(format!("Function not found: {}", name))?;
 
     if function.count_params() != arguments.len() as u32 {
-      return Err(format!(
-        "Function {} expects {} argument(s), but got {}",
-        name,
-        function.count_params(),
-        arguments.len()
-      ));
+      return Err(
+        format!(
+          "Function {} expects {} argument(s), but got {}",
+          name,
+          function.count_params(),
+          arguments.len()
+        )
+        .into(),
+      );
     }
 
     let mut processed_arguments = Vec::with_capacity(arguments.len());
@@ -951,9 +954,9 @@ impl<'ctx> Compiler<'ctx> {
   fn compile_display(
     &mut self,
     arguments: &[Expression],
-  ) -> Result<BasicValueEnum<'ctx>, String> {
+  ) -> Result<BasicValueEnum<'ctx>> {
     if arguments.len() != 1 {
-      return Err("Function `display` requires exactly 1 argument".to_string());
+      return Err("Function `display` requires exactly 1 argument".into());
     }
 
     let value = self.compile_expression(&arguments[0])?;
@@ -961,7 +964,7 @@ impl<'ctx> Compiler<'ctx> {
     let printf = self
       .module
       .get_function("printf")
-      .ok_or("Printf function not found".to_string())?;
+      .ok_or("Failed to find printf function".to_string())?;
 
     let format_string = match value {
       BasicValueEnum::IntValue(_) => self
@@ -976,7 +979,7 @@ impl<'ctx> Compiler<'ctx> {
         .builder
         .build_global_string_ptr("%s", "string_format")
         .map_err(|e| e.to_string())?,
-      _ => return Err("Unsupported type for display".to_string()),
+      _ => return Err("Unsupported type for display".into()),
     };
 
     self
@@ -994,7 +997,7 @@ impl<'ctx> Compiler<'ctx> {
   fn compile_begin(
     &mut self,
     args: &[Expression],
-  ) -> Result<BasicValueEnum<'ctx>, String> {
+  ) -> Result<BasicValueEnum<'ctx>> {
     if args.is_empty() {
       return Ok(self.context.i32_type().const_int(0, false).into());
     }

@@ -54,6 +54,22 @@ impl Display for Expression<'_> {
   }
 }
 
+impl Expression<'_> {
+  pub(crate) fn is_function(&self) -> bool {
+    if let Expression::List(elements) = self {
+      if !elements.is_empty() {
+        if let Expression::Atom(Atom::Symbol(name)) = &elements[0] {
+          if *name == "define" {
+            return true;
+          }
+        }
+      }
+    }
+
+    false
+  }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Atom<'src> {
   Boolean(bool),
