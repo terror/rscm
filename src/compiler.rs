@@ -39,7 +39,10 @@ impl<'ctx> Compiler<'ctx> {
     }
   }
 
-  pub fn compile(&mut self, expressions: &[Expression]) -> Result<(), String> {
+  pub fn compile(
+    &mut self,
+    expressions: &[Expression],
+  ) -> Result<Module<'ctx>, String> {
     let i8_ptr_type = self.context.ptr_type(AddressSpace::default());
 
     let printf_type =
@@ -112,11 +115,7 @@ impl<'ctx> Compiler<'ctx> {
       return Err("Failed to verify module".to_string());
     }
 
-    Ok(())
-  }
-
-  pub fn get_ir(&self) -> String {
-    self.module.print_to_string().to_string()
+    Ok(self.module.clone())
   }
 
   fn define_primitive(&mut self, name: &str, arity: u32) {
@@ -208,10 +207,43 @@ impl<'ctx> Compiler<'ctx> {
         "if" => self.compile_if(&elements[1..]),
         "lambda" => todo!(),
         "let" => todo!(),
+        "newline" => self.compile_newline(&elements[1..]),
         _ => self.compile_function_call(name, &elements[1..]),
       },
       _ => todo!(),
     }
+  }
+
+  fn compile_newline(
+    &mut self,
+    arguments: &[Expression],
+  ) -> Result<BasicValueEnum<'ctx>, String> {
+    if !arguments.is_empty() {
+      return Err(
+        "Function `newline` does not accept any arguments".to_string(),
+      );
+    }
+
+    let printf = self
+      .module
+      .get_function("printf")
+      .ok_or("Printf function not found".to_string())?;
+
+    let newline_format = self
+      .builder
+      .build_global_string_ptr("\n", "newline_format")
+      .map_err(|e| e.to_string())?;
+
+    self
+      .builder
+      .build_call(
+        printf,
+        &[newline_format.as_pointer_value().into()],
+        "printf_newline",
+      )
+      .map_err(|e| e.to_string())?;
+
+    Ok(self.context.i32_type().const_int(0, false).into())
   }
 
   fn compile_primitive_operation(

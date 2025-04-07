@@ -102,7 +102,24 @@ fn hello_world() -> Result {
       "
     })
     .expected_status(0)
-    .expected_stdout("Hello, world!\n")
+    .expected_stdout("Hello, world!")
+    .run()
+}
+
+#[test]
+fn newline() -> Result {
+  Test::new()?
+    .program(indoc! {
+      "
+      (display \"a\")
+      (newline)
+      (display \"b\")
+      (newline)
+      (display \"c\")
+      "
+    })
+    .expected_status(0)
+    .expected_stdout("a\nb\nc")
     .run()
 }
 
@@ -144,7 +161,7 @@ fn add_two_int_literals() -> Result {
       "
     })
     .expected_status(0)
-    .expected_stdout("3\n")
+    .expected_stdout("3")
     .run()
 }
 
@@ -178,7 +195,7 @@ fn factorial() -> Result {
       "
     })
     .expected_status(0)
-    .expected_stdout("120\n")
+    .expected_stdout("120")
     .run()
 }
 

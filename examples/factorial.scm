@@ -4,3 +4,4 @@
     (* n (factorial (- n 1)))))
 
 (display (factorial 5))
+(newline)

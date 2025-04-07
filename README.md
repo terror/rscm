@@ -12,7 +12,7 @@ cd rscm
 cargo install --path .
 ```
 
-**n.b.** You must have the [LLVM](https://llvm.org/) @ 18 installed on your machine.
+**n.b.** You must have [LLVM](https://llvm.org/) @ 18 installed on your machine.
 
 ## Usage
 
