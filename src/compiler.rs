@@ -88,10 +88,6 @@ impl<'ctx> Compiler<'ctx> {
       .build_return(Some(&return_value))
       .map_err(|e| e.to_string())?;
 
-    if self.module.verify().is_err() {
-      return Err("Failed to verify module".into());
-    }
-
     Ok(self.module.clone())
   }
 
@@ -606,14 +602,11 @@ impl<'ctx> Compiler<'ctx> {
   fn dereference(
     &self,
     value: BasicValueEnum<'ctx>,
-  ) -> Result<BasicValueEnum<'ctx>, String> {
+  ) -> Result<BasicValueEnum<'ctx>> {
     match value {
       BasicValueEnum::PointerValue(ptr) => {
         if let Some(pointee_type) = self.pointer_type_map.get(&ptr) {
-          self
-            .builder
-            .build_load(*pointee_type, ptr, "typed_load")
-            .map_err(|e| e.to_string())
+          Ok(self.builder.build_load(*pointee_type, ptr, "typed_load")?)
         } else {
           Err("Failed to find type for pointer".into())
         }

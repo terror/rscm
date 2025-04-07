@@ -51,6 +51,8 @@ impl Arguments {
 
     let module = compiler.compile(&ast)?;
 
+    module.verify()?;
+
     let execution_engine =
       module.create_jit_execution_engine(OptimizationLevel::Default)?;
 
