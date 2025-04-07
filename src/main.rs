@@ -47,7 +47,7 @@ impl Arguments {
 
     let context = Context::create();
 
-    let mut compiler = Compiler::new(&context, env!("CARGO_PKG_NAME"));
+    let mut compiler = Compiler::new(&context);
 
     let module = compiler.compile(&ast)?;
 

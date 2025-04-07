@@ -24,8 +24,8 @@ pub struct Compiler<'ctx> {
 }
 
 impl<'ctx> Compiler<'ctx> {
-  pub fn new(context: &'ctx Context, module_name: &str) -> Self {
-    let module = context.create_module(module_name);
+  pub fn new(context: &'ctx Context) -> Self {
+    let module = context.create_module(env!("CARGO_PKG_NAME"));
 
     let builder = context.create_builder();
 
