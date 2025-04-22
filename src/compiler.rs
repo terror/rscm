@@ -51,7 +51,7 @@ impl<'ctx> Compiler<'ctx> {
       .collect::<Vec<&Expression>>();
 
     for function in &functions {
-      self.compile_expression(function)?;
+      self.emit_expression(function)?;
     }
 
     let i32_type = self.context.i32_type();
@@ -75,7 +75,7 @@ impl<'ctx> Compiler<'ctx> {
       .collect::<Vec<&Expression>>();
 
     for expression in &expressions {
-      result = Some(self.compile_expression(expression)?);
+      result = Some(self.emit_expression(expression)?);
     }
 
     let return_value = match result {
@@ -126,23 +126,23 @@ impl<'ctx> Compiler<'ctx> {
     Ok(())
   }
 
-  fn compile_expression(
+  fn emit_expression(
     &mut self,
     expr: &Expression,
   ) -> Result<BasicValueEnum<'ctx>> {
     match expr {
-      Expression::Atom(atom) => self.compile_atom(atom),
-      Expression::List(elements) => self.compile_list(elements),
+      Expression::Atom(atom) => self.emit_atom(atom),
+      Expression::List(elements) => self.emit_list(elements),
       _ => todo!(),
     }
   }
 
-  fn compile_atom(&self, atom: &Atom) -> Result<BasicValueEnum<'ctx>> {
+  fn emit_atom(&self, atom: &Atom) -> Result<BasicValueEnum<'ctx>> {
     match atom {
       Atom::Boolean(b) => {
         Ok(self.context.bool_type().const_int(*b as u64, false).into())
       }
-      Atom::Number(number) => self.compile_number(number),
+      Atom::Number(number) => self.emit_number(number),
       Atom::String(s) => Ok(
         self
           .builder
@@ -164,7 +164,7 @@ impl<'ctx> Compiler<'ctx> {
     }
   }
 
-  fn compile_number(&self, num: &Number) -> Result<BasicValueEnum<'ctx>> {
+  fn emit_number(&self, num: &Number) -> Result<BasicValueEnum<'ctx>> {
     match num {
       Number::Integer(i) => {
         Ok(self.context.i64_type().const_int(*i as u64, *i < 0).into())
@@ -178,7 +178,7 @@ impl<'ctx> Compiler<'ctx> {
     }
   }
 
-  fn compile_list(
+  fn emit_list(
     &mut self,
     elements: &[Expression],
   ) -> Result<BasicValueEnum<'ctx>> {
@@ -188,27 +188,27 @@ impl<'ctx> Compiler<'ctx> {
 
     match &elements[0] {
       Expression::Atom(Atom::Symbol(name)) => match *name {
-        "*" => self.compile_primitive_operation("*", &elements[1..]),
-        "+" => self.compile_primitive_operation("+", &elements[1..]),
-        "-" => self.compile_primitive_operation("-", &elements[1..]),
-        "/" => self.compile_primitive_operation("/", &elements[1..]),
-        "<" => self.compile_primitive_operation("<", &elements[1..]),
-        "=" => self.compile_primitive_operation("=", &elements[1..]),
-        ">" => self.compile_primitive_operation(">", &elements[1..]),
-        "begin" => self.compile_begin(&elements[1..]),
-        "define" => self.compile_define(&elements[1..]),
-        "display" => self.compile_display(&elements[1..]),
-        "if" => self.compile_if(&elements[1..]),
+        "*" => self.emit_primitive_operation("*", &elements[1..]),
+        "+" => self.emit_primitive_operation("+", &elements[1..]),
+        "-" => self.emit_primitive_operation("-", &elements[1..]),
+        "/" => self.emit_primitive_operation("/", &elements[1..]),
+        "<" => self.emit_primitive_operation("<", &elements[1..]),
+        "=" => self.emit_primitive_operation("=", &elements[1..]),
+        ">" => self.emit_primitive_operation(">", &elements[1..]),
+        "begin" => self.emit_begin(&elements[1..]),
+        "define" => self.emit_define(&elements[1..]),
+        "display" => self.emit_display(&elements[1..]),
+        "if" => self.emit_if(&elements[1..]),
         "lambda" => todo!(),
         "let" => todo!(),
-        "newline" => self.compile_newline(&elements[1..]),
-        _ => self.compile_function_call(name, &elements[1..]),
+        "newline" => self.emit_newline(&elements[1..]),
+        _ => self.emit_function_call(name, &elements[1..]),
       },
       _ => todo!(),
     }
   }
 
-  fn compile_newline(
+  fn emit_newline(
     &mut self,
     arguments: &[Expression],
   ) -> Result<BasicValueEnum<'ctx>> {
@@ -238,14 +238,14 @@ impl<'ctx> Compiler<'ctx> {
     Ok(self.context.i32_type().const_int(0, false).into())
   }
 
-  fn compile_primitive_operation(
+  fn emit_primitive_operation(
     &mut self,
     operation: &str,
     arguments: &[Expression],
   ) -> Result<BasicValueEnum<'ctx>> {
     let compiled_arguments = arguments
       .iter()
-      .map(|argument| self.compile_expression(argument))
+      .map(|argument| self.emit_expression(argument))
       .collect::<Result<Vec<_>, _>>()?;
 
     if compiled_arguments.is_empty() {
@@ -594,7 +594,7 @@ impl<'ctx> Compiler<'ctx> {
           ).into()),
         }
       }
-      "display" => self.compile_display(arguments),
+      "display" => self.emit_display(arguments),
       _ => Err(format!("Unknown primitive operation: {}", operation).into()),
     }
   }
@@ -615,15 +615,12 @@ impl<'ctx> Compiler<'ctx> {
     }
   }
 
-  fn compile_if(
-    &mut self,
-    args: &[Expression],
-  ) -> Result<BasicValueEnum<'ctx>> {
+  fn emit_if(&mut self, args: &[Expression]) -> Result<BasicValueEnum<'ctx>> {
     if args.len() < 2 || args.len() > 3 {
       return Err("If expression requires 2 or 3 arguments".into());
     }
 
-    let condition = self.compile_expression(&args[0])?;
+    let condition = self.emit_expression(&args[0])?;
 
     let condition_value = match condition {
       BasicValueEnum::IntValue(val) => val,
@@ -669,7 +666,7 @@ impl<'ctx> Compiler<'ctx> {
 
     self.builder.position_at_end(then_block);
 
-    let then_value = self.compile_expression(&args[1])?;
+    let then_value = self.emit_expression(&args[1])?;
 
     let then_block = self.builder.get_insert_block().unwrap();
 
@@ -681,7 +678,7 @@ impl<'ctx> Compiler<'ctx> {
     self.builder.position_at_end(else_block);
 
     let else_value = if args.len() == 3 {
-      self.compile_expression(&args[2])?
+      self.emit_expression(&args[2])?
     } else {
       self.context.i32_type().const_int(0, false).into()
     };
@@ -709,7 +706,7 @@ impl<'ctx> Compiler<'ctx> {
     }
   }
 
-  fn compile_define(
+  fn emit_define(
     &mut self,
     args: &[Expression],
   ) -> Result<BasicValueEnum<'ctx>> {
@@ -719,7 +716,7 @@ impl<'ctx> Compiler<'ctx> {
 
     match &args[0] {
       Expression::Atom(Atom::Symbol(name)) => {
-        let value = self.compile_expression(&args[1])?;
+        let value = self.emit_expression(&args[1])?;
 
         let global_type = match value {
           BasicValueEnum::IntValue(_) => self.context.i64_type().into(),
@@ -822,7 +819,7 @@ impl<'ctx> Compiler<'ctx> {
             self.pointer_type_map.insert(alloca, parameter.get_type());
           }
 
-          let body_result = self.compile_expression(&args[1])?;
+          let body_result = self.emit_expression(&args[1])?;
 
           let return_value = match body_result {
             BasicValueEnum::FloatValue(f) => self
@@ -852,14 +849,14 @@ impl<'ctx> Compiler<'ctx> {
     }
   }
 
-  fn compile_function_call(
+  fn emit_function_call(
     &mut self,
     name: &str,
     arguments: &[Expression],
   ) -> Result<BasicValueEnum<'ctx>> {
     let arguments = arguments
       .iter()
-      .map(|arg| self.compile_expression(arg))
+      .map(|arg| self.emit_expression(arg))
       .collect::<Result<Vec<_>, _>>()?;
 
     let function = self
@@ -944,7 +941,7 @@ impl<'ctx> Compiler<'ctx> {
     Ok(result)
   }
 
-  fn compile_display(
+  fn emit_display(
     &mut self,
     arguments: &[Expression],
   ) -> Result<BasicValueEnum<'ctx>> {
@@ -952,7 +949,7 @@ impl<'ctx> Compiler<'ctx> {
       return Err("Function `display` requires exactly 1 argument".into());
     }
 
-    let value = self.compile_expression(&arguments[0])?;
+    let value = self.emit_expression(&arguments[0])?;
 
     let printf = self
       .module
@@ -987,7 +984,7 @@ impl<'ctx> Compiler<'ctx> {
     Ok(value)
   }
 
-  fn compile_begin(
+  fn emit_begin(
     &mut self,
     args: &[Expression],
   ) -> Result<BasicValueEnum<'ctx>> {
@@ -998,7 +995,7 @@ impl<'ctx> Compiler<'ctx> {
     let mut result = None;
 
     for expr in args {
-      result = Some(self.compile_expression(expr)?);
+      result = Some(self.emit_expression(expr)?);
     }
 
     Ok(result.unwrap())
